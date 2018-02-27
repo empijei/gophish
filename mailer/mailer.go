@@ -7,9 +7,13 @@ import (
 	"log"
 	"net/textproto"
 	"os"
+	"time"
 
 	"github.com/gophish/gomail"
 )
+
+var MailChunkSize = 10
+var MailDelayTime = 10 * time.Minute
 
 // MaxReconnectAttempts is the maximum number of times we should reconnect to a server
 var MaxReconnectAttempts = 10
@@ -74,14 +78,31 @@ func (mw *MailWorker) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case ms := <-mw.Queue:
-			go func(ctx context.Context, ms []Mail) {
-				Logger.Printf("Mailer got %d mail to send", len(ms))
-				dialer, err := ms[0].GetDialer()
-				if err != nil {
-					errorMail(err, ms)
+			go func(ctx context.Context, ams []Mail) {
+				Logger.Printf("Mailer got %d mail to send", len(ams))
+
+				for len(ams) > MailChunkSize {
+					ms := ams[:MailChunkSize]
+					dialer, err := ms[0].GetDialer()
+					if err != nil {
+						errorMail(err, ms)
+						return
+					}
+					sendMail(ctx, dialer, ms)
+					time.Sleep(MailDelayTime)
+					ams = ams[MailChunkSize:]
+				}
+
+				if len(ams) == 0 {
 					return
 				}
-				sendMail(ctx, dialer, ms)
+
+				dialer, err := ams[0].GetDialer()
+				if err != nil {
+					errorMail(err, ams)
+					return
+				}
+				sendMail(ctx, dialer, ams)
 			}(ctx, ms)
 		}
 	}
